@@ -1,0 +1,119 @@
+### 2.2 State Transition Diagram
+
+```
+═══════════════════════════════════════════════════════════════
+  CREATION PATHS (how an RFQ enters the system)
+═══════════════════════════════════════════════════════════════
+
+  Sales creates standard RFQ ─────────────────────→ PENDING
+  Sales creates WO VERSUS (initial request) ──────→ WO_PROPOSED
+  Sales creates Cross Order ──────────────────────→ GTT (two linked legs)
+
+
+═══════════════════════════════════════════════════════════════
+  STATE TRANSITIONS
+═══════════════════════════════════════════════════════════════
+
+PENDING
+  ├──[sales edits]───────────→ CANCELLED + new PENDING
+  ├──[sales cancels]─────────→ CANCELLED
+  ├──[trader accepts]────────→ ACCEPTED
+  ├──[trader rejects]────────→ REJECTED
+  └──[timeout]───────────────→ EXPIRED
+
+ACCEPTED
+  ├──[trader quotes]─────────→ QUOTED
+  ├──[trader rejects]────────→ REJECTED
+  └──[timeout]───────────────→ EXPIRED
+
+QUOTED
+  ├──[sales good to trade]───→ GTT
+  ├──[sales requests REF]───→ REQUOTE
+  ├──[sales counters]────────→ COUNTERED
+  ├──[sales proposes WO]────→ WO_PROPOSED  (VERSUS only, not WO/LIMIT)
+  ├──[sales crosses]─────────→ CANCELLED + new GTT legs
+  ├──[trader edits quote]───→ QUOTED  (revised prices)
+  ├──[sales cancels]─────────→ CANCELLED
+  └──[trader cancels]────────→ CANCELLED
+  → while sales hasn't responded, trader can edit or cancel
+
+REQUOTE
+  ├──[trader re-quotes]──────→ QUOTED
+  ├──[trader stays firm]────→ QUOTED  (keeps original prices)
+  ├──[sales cancels]─────────→ CANCELLED
+  ├──[trader cancels]────────→ CANCELLED
+  └──[timeout]───────────────→ EXPIRED
+
+COUNTERED
+  ├──[trader matches]────────→ MATCHED  (adopts sales counter prices)
+  ├──[trader firms on prev]─→ QUOTED  (reverts to prior trader prices)
+  ├──[sales cancels]─────────→ CANCELLED
+  ├──[trader cancels]────────→ CANCELLED
+  └──[timeout]───────────────→ EXPIRED
+
+MATCHED
+  ├──[sales good to trade]───→ GTT
+  ├──[sales crosses]─────────→ CANCELLED + new GTT legs
+  └──[sales cancels]─────────→ CANCELLED
+
+WO_PROPOSED
+  ├──[trader approves]───────→ LIMIT_PLACED  (saves stamp duty, spread, working price)
+  ├──[trader rejects]────────→ REJECTED  (initial WO — no prior quote)
+  ├──[trader rejects]────────→ QUOTED  (mid-stream WO — reverts to prior quote)
+  └──[sales cancels]─────────→ CANCELLED
+  → initial vs mid-stream detected by: traderBid == null && traderOffer == null
+
+LIMIT_PLACED
+  ├──[sales GTT]─────────────→ GTT  (VERSUS orders)
+  ├──[sales crosses]─────────→ CANCELLED + new GTT legs
+  ├──[trader executes]───────→ EXECUTED
+  ├──[trader edits]──────────→ QUOTED
+  ├──[sales cancels]─────────→ CANCELLED
+  └──[trader cancels]────────→ CANCELLED
+
+GTT  (branching depends on order type and cross)
+  │
+  ├─ OUTRIGHT (simple):
+  │   ├──[trader executes]───→ EXECUTED
+  │   ├──[trader edits]──────→ QUOTED
+  │   └──[trader/sales cancel]→ CANCELLED
+  │
+  ├─ VERSUS STANDARD (non-VWAP/TWAP):
+  │   ├──[trader confirms & executes]→ EXECUTED  (shares adjustable)
+  │   ├──[trader edits]──────→ QUOTED
+  │   └──[trader/sales cancel]→ CANCELLED
+  │
+  ├─ VERSUS VWAP/TWAP:
+  │   ├──[trader marks working]→ WORKING
+  │   ├──[trader edits]──────→ QUOTED
+  │   └──[trader/sales cancel]→ CANCELLED
+  │
+  ├─ WORK ORDER LIMIT:
+  │   ├──[trader places limit]→ LIMIT_PLACED
+  │   ├──[trader edits]──────→ QUOTED
+  │   └──[trader/sales cancel]→ CANCELLED
+  │
+  ├─ CROSS (simple / STANDARD):
+  │   ├──[trader executes]───→ EXECUTED
+  │   └──[trader/sales cancel]→ CANCELLED
+  │
+  └─ CROSS VWAP/TWAP:
+      ├──[sales/trader nukes bond]→ NUKED  (enters exec prices)
+      └──[trader/sales cancel]→ CANCELLED
+
+WORKING
+  ├──[trader completes]──────→ EXECUTED  (enters VWAP price, FX, bond price)
+  ├──[trader edits]──────────→ QUOTED
+  └──[trader cancels]────────→ CANCELLED
+
+NUKED
+  ├──[trader executes]───────→ EXECUTED  (cross bid/ask preserved)
+  └──[trader cancels]────────→ CANCELLED
+
+EXECUTED
+  ├──[sales requests ref]───→ pre-fills new RFQ form → new PENDING
+  └──[trader refs]───────────→ auto-creates new PENDING  (same bond/client)
+  → Ref converts WORK ORDER type back to OUTRIGHT
+  → Notes: "Ref from RFQ-XXX"
+
+Terminal states: CANCELLED, REJECTED, EXPIRED, EXECUTED
